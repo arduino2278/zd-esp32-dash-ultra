@@ -17,9 +17,36 @@
     color: #333;
   }
 
-  #distance {
-    font-size: 2em;
-    margin: 20px 0;
+  /* Jauge */
+  #gaugeContainer {
+    width: 200px;
+    height: 200px;
+    margin: 20px auto;
+    position: relative;
+  }
+
+  #gaugeBackground {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: #ddd;
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  #gaugeFill {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    clip-path: circle(50% at 50% 50%);
+    background: green;
+    transform: rotate(-90deg);
+    transform-origin: center;
+    position: absolute;
+    top: 0;
+    left: 0;
+    transition: background 0.5s, transform 0.5s;
   }
 
   /* LED rouge réaliste */
@@ -60,9 +87,17 @@
 <body>
 
 <h1>Dashboard Ultrason ESP32</h1>
-<div id="distance">Distance : -- cm</div>
+
+<!-- Jauge distance -->
+<div id="gaugeContainer">
+  <div id="gaugeBackground"></div>
+  <div id="gaugeFill"></div>
+</div>
+
+<!-- LED rouge -->
 <div class="led" id="ledRed"></div>
 
+<!-- Graphique historique -->
 <div id="chartContainer">
   <canvas id="distanceChart"></canvas>
 </div>
@@ -72,16 +107,15 @@
   const BLYNK_TOKEN = '-7-xZBmu_CuhFF5pM1VZAHSUr_bg6oJh';
   const PIN_DISTANCE = 'V6';
   const UPDATE_INTERVAL = 1000; // ms
-  const MAX_POINTS = 60; // points à afficher sur le graphique
+  const MAX_POINTS = 60;
 
-  const distanceElem = document.getElementById('distance');
   const ledElem = document.getElementById('ledRed');
+  const gaugeFill = document.getElementById('gaugeFill');
 
-  // ----- HISTORIQUE DES DONNÉES -----
+  // ----- HISTORIQUE GRAPHIQUE -----
   let distanceData = [];
   let labels = [];
 
-  // ----- INIT GRAPH -----
   const ctx = document.getElementById('distanceChart').getContext('2d');
   const distanceChart = new Chart(ctx, {
     type: 'line',
@@ -99,53 +133,66 @@
     options: {
       responsive: true,
       scales: {
-        y: {
-          suggestedMin: 0,
-          suggestedMax: 50
-        }
-      },
-      plugins: {
-        legend: {
-          display: true
-        }
+        y: { suggestedMin: 0, suggestedMax: 50 }
       }
     }
   });
 
-  // ----- FONCTION DE MISE À JOUR -----
+  // ----- MISE À JOUR JAUSTRIQUE -----
+  function updateGauge(distance) {
+    // rotation jauge (0 cm = 100% rempli, max 50 cm = 0%)
+    let rotation = Math.min(distance, 50) / 50 * 180; // 0-180 degrés
+    gaugeFill.style.transform = `rotate(${rotation - 90}deg)`; // ajustement -90
+
+    // Couleur dynamique
+    let color;
+    if(distance < 10) {
+      // rouge foncé quand proche
+      let intensity = Math.floor(255 - distance * 15); // distance 0->10 : 255->105
+      color = `rgb(${intensity},0,0)`;
+    } else {
+      // vert clair quand loin
+      let intensity = Math.min(255, 100 + (distance-10)*10); // 10->50 : 100->440 (max 255)
+      intensity = Math.min(intensity, 255);
+      color = `rgb(0,${intensity},0)`;
+    }
+    gaugeFill.style.background = color;
+  }
+
+  // ----- MISE À JOUR DONNÉES -----
   async function updateData() {
     try {
       const response = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&pin=${PIN_DISTANCE}`);
       const data = await response.text();
       const distance = parseFloat(data);
 
-      // ---- AFFICHAGE ----
-      distanceElem.textContent = `Distance : ${distance.toFixed(1)} cm`;
-
-      // ---- LED rouge ----
+      // LED rouge animation
       if(distance < 10) {
         ledElem.classList.add('on');
       } else {
         ledElem.classList.remove('on');
       }
 
-      // ---- MISE À JOUR DU GRAPHIQUE ----
+      // jauge
+      updateGauge(distance);
+
+      // graphique historique
       if(distanceData.length >= MAX_POINTS) {
         distanceData.shift();
         labels.shift();
       }
       distanceData.push(distance);
       labels.push(new Date().toLocaleTimeString());
-
       distanceChart.update();
+
     } catch(err) {
       console.error('Erreur Blynk API:', err);
     }
   }
 
-  // ----- BOUCLE -----
   setInterval(updateData, UPDATE_INTERVAL);
   updateData();
+
 </script>
 
 </body>
