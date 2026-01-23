@@ -17,36 +17,9 @@
     color: #333;
   }
 
-  /* Jauge */
-  #gaugeContainer {
-    width: 200px;
-    height: 200px;
-    margin: 20px auto;
-    position: relative;
-  }
-
-  #gaugeBackground {
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    background: #ddd;
-    position: absolute;
-    top: 0;
-    left: 0;
-  }
-
-  #gaugeFill {
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    clip-path: circle(50% at 50% 50%);
-    background: green;
-    transform: rotate(-90deg);
-    transform-origin: center;
-    position: absolute;
-    top: 0;
-    left: 0;
-    transition: background 0.5s, transform 0.5s;
+  #distance {
+    font-size: 2em;
+    margin: 20px 0;
   }
 
   /* LED rouge réaliste */
@@ -72,8 +45,8 @@
     100% { box-shadow: 0 0 25px #ff7777, 0 0 35px #ff3333; }
   }
 
-  /* Graphique */
-  #chartContainer {
+  /* Graphiques */
+  #chartContainer, #gaugeContainer {
     width: 90%;
     max-width: 800px;
     margin: 40px auto;
@@ -82,20 +55,24 @@
     border-radius: 15px;
     box-shadow: 0 0 15px rgba(0,0,0,0.2);
   }
+
+  #gaugeContainer {
+    height: 200px;
+  }
 </style>
 </head>
 <body>
 
 <h1>Dashboard Ultrason ESP32</h1>
-
-<!-- Jauge distance -->
-<div id="gaugeContainer">
-  <div id="gaugeBackground"></div>
-  <div id="gaugeFill"></div>
-</div>
+<div id="distance">Distance : -- cm</div>
 
 <!-- LED rouge -->
 <div class="led" id="ledRed"></div>
+
+<!-- Jauge -->
+<div id="gaugeContainer">
+  <canvas id="distanceGauge"></canvas>
+</div>
 
 <!-- Graphique historique -->
 <div id="chartContainer">
@@ -105,19 +82,21 @@
 <script>
   // ----- CONFIGURATION -----
   const BLYNK_TOKEN = '1gJPTklt2nr0UAlJg4Srvzhp4DaHMmJE';
-  const PIN_DISTANCE = 'V0';
+  const PIN_JAUGE = 'V0';
+  const PIN_LED = 'V1';
   const UPDATE_INTERVAL = 1000; // ms
-  const MAX_POINTS = 60;
+  const MAX_POINTS = 60; // points à afficher sur le graphique
 
+  const distanceElem = document.getElementById('distance');
   const ledElem = document.getElementById('ledRed');
-  const gaugeFill = document.getElementById('gaugeFill');
 
-  // ----- HISTORIQUE GRAPHIQUE -----
+  // ----- HISTORIQUE DES DONNÉES -----
   let distanceData = [];
   let labels = [];
 
-  const ctx = document.getElementById('distanceChart').getContext('2d');
-  const distanceChart = new Chart(ctx, {
+  // ----- INIT GRAPH LINE -----
+  const ctxLine = document.getElementById('distanceChart').getContext('2d');
+  const distanceChart = new Chart(ctxLine, {
     type: 'line',
     data: {
       labels: labels,
@@ -133,50 +112,60 @@
     options: {
       responsive: true,
       scales: {
-        y: { suggestedMin: 0, suggestedMax: 50 }
+        y: {
+          suggestedMin: 0,
+          suggestedMax: 50
+        }
+      },
+      plugins: {
+        legend: { display: true }
       }
     }
   });
 
-  // ----- MISE À JOUR JAUSTRIQUE -----
-  function updateGauge(distance) {
-    // rotation jauge (0 cm = 100% rempli, max 50 cm = 0%)
-    let rotation = Math.min(distance, 50) / 50 * 180; // 0-180 degrés
-    gaugeFill.style.transform = `rotate(${rotation - 90}deg)`; // ajustement -90
-
-    // Couleur dynamique
-    let color;
-    if(distance < 10) {
-      // rouge foncé quand proche
-      let intensity = Math.floor(255 - distance * 15); // distance 0->10 : 255->105
-      color = `rgb(${intensity},0,0)`;
-    } else {
-      // vert clair quand loin
-      let intensity = Math.min(255, 100 + (distance-10)*10); // 10->50 : 100->440 (max 255)
-      intensity = Math.min(intensity, 255);
-      color = `rgb(0,${intensity},0)`;
+  // ----- INIT GAUGE -----
+  const ctxGauge = document.getElementById('distanceGauge').getContext('2d');
+  const distanceGauge = new Chart(ctxGauge, {
+    type: 'doughnut',
+    data: {
+      labels: ['Distance', 'Rest'],
+      datasets: [{
+        data: [0, 50], // initial
+        backgroundColor: ['red', '#eee'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      rotation: -90,
+      circumference: 180,
+      cutout: '70%',
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false }
+      }
     }
-    gaugeFill.style.background = color;
-  }
+  });
 
-  // ----- MISE À JOUR DONNÉES -----
+  // ----- FONCTION DE MISE À JOUR -----
   async function updateData() {
     try {
-      const response = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&pin=${PIN_DISTANCE}`);
-      const data = await response.text();
-      const distance = parseFloat(data);
+      // ---- Jauge ----
+      const resGauge = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_TOKEN}&pin=${PIN_JAUGE}`);
+      const dataGauge = await resGauge.text();
+      const distance = parseFloat(dataGauge);
 
-      // LED rouge animation
+      // ---- AFFICHAGE DISTANCE ----
+      distanceElem.textContent = `Distance : ${distance.toFixed(1)} cm`;
+
+      // ---- LED rouge ----
       if(distance < 10) {
         ledElem.classList.add('on');
       } else {
         ledElem.classList.remove('on');
       }
 
-      // jauge
-      updateGauge(distance);
-
-      // graphique historique
+      // ---- MISE À JOUR DU GRAPHIQUE LINE ----
       if(distanceData.length >= MAX_POINTS) {
         distanceData.shift();
         labels.shift();
@@ -185,14 +174,19 @@
       labels.push(new Date().toLocaleTimeString());
       distanceChart.update();
 
+      // ---- MISE À JOUR DE LA GAUGE ----
+      distanceGauge.data.datasets[0].data[0] = distance;
+      distanceGauge.data.datasets[0].data[1] = 50 - distance; // max 50 cm
+      distanceGauge.update();
+
     } catch(err) {
       console.error('Erreur Blynk API:', err);
     }
   }
 
+  // ----- BOUCLE -----
   setInterval(updateData, UPDATE_INTERVAL);
   updateData();
-
 </script>
 
 </body>
